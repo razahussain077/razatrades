@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";\nimport type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Activity, AlertTriangle, BrainCircuit, CandlestickChart, Clock3, Gauge,
   LayoutDashboard, Radio, ScanSearch, Search, Settings2, ShieldCheck,
@@ -49,7 +50,8 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [chartBars, setChartBars] = useState(false);
   const [chartMeta, setChartMeta] = useState<{source:string;updated:string;quoteAge?:number;bid?:number;ask?:number;spread?:number;digits?:number}>({source:"Waiting for broker feed",updated:"No broker candles received"});
-  const [loading, setLoading] = useState(false);\n  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const chartEl = useRef<HTMLDivElement>(null);
 
   const selected = universe.find(item => item.symbol === symbol);
@@ -92,7 +94,7 @@ export default function Home() {
     void refresh();
     const timer = setInterval(refresh, 15000);
     return () => { stopped = true; clearInterval(timer); };
-  }, []);
+  }, [refreshNonce]);
 
   useEffect(() => {
     if (!chartEl.current) return;
