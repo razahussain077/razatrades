@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: swiftlabor-forex-worker
+    runtime: docker
+    region: singapore
+    plan: free
+    dockerfilePath: ./worker/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: BRIDGE_TOKEN
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: https://swiftlabor-forex-intelligence.vercel.app
+      - key: SCAN_INTERVAL_SECONDS
+        value: "15"
+      - key: STALE_AFTER_SECONDS
+        value: "180"
+      - key: MAX_BARS_PER_STREAM
+        value: "250"
