@@ -1,32 +1,58 @@
-# SwiftLabor.ai — MT5 Forex Intelligence v0.2
+# SwiftLabor.ai — MT5 Market Intelligence v0.3
 
-Blue-and-white forex research terminal with a Next.js dashboard, interactive TradingView Lightweight Charts, Python/FastAPI analysis worker, and read-only MT5 Expert Advisor bridge.
+MT5-first market research terminal: Next.js dashboard, TradingView Lightweight Charts, FastAPI ingestion/analysis worker, and a read-only MetaTrader 5 Expert Advisor bridge.
 
-## Status and limitations
+## Truthful connection status
 
-The Vercel dashboard is deployed at https://swiftlabor-forex-intelligence.vercel.app. The Render worker and MT5 bridge are not yet connected. Until the client terminal publishes candles, the dashboard uses synthetic demo prices. The rules engine is a research prototype, not a validated profitable strategy. It cannot see dealer private orders, market-wide stop-losses, or global OTC order flow. No order-placement code is present.
+The Vercel dashboard is deployed at https://swiftlabor-forex-intelligence-app.vercel.app. The Render worker and client Equiti terminal are **not yet connected**. The dashboard now displays no synthetic candle prices or generated trade signals. It waits for broker snapshots and publishes market assessments only from fresh MT5 candles.
 
-## Deploy worker
+This is a private, client-specific broker feed. Equiti's symbol names, suffixes, bid/ask, spread and Market Watch universe are discovered from the authenticated MT5 terminal; the assistant does not need an MT5 password or investor password. Never put a broker login password in the EA, GitHub, this chat or Vercel.
 
-Import this repository's root-level render.yaml as a Render Blueprint. The Blueprint uses a Docker web service in Singapore, with an automatically generated BRIDGE_TOKEN and /health check. On the free compute plan, Render services spin down after 15 minutes without inbound traffic and can restart at any time; this is suitable for preview, not a dependable always-on production feed. A continuously running service requires a paid compute plan. See https://render.com/docs/free and https://render.com/docs/blueprint-spec.
+## Architecture
 
-After deploy, keep BRIDGE_TOKEN private. Set CORS_ORIGINS to the exact Vercel origin and copy the worker HTTPS URL into Vercel's NEXT_PUBLIC_WORKER_API_URL environment variable.
+Client's Equiti MT5 Desktop/VPS -> read-only SwiftLaborBridge EA -> authenticated HTTPS POST -> FastAPI worker -> Vercel dashboard.
 
-## Run locally
+The EA transmits OHLC candles, tick volume, symbol metadata, bid/ask, spread, quote timestamp and broker server label. It does not transmit account credentials, balance or positions and does not place, modify or close trades.
 
-Worker: cd worker, pip install -r requirements.txt, set BRIDGE_TOKEN and CORS_ORIGINS, then uvicorn main:app --reload --port 8000.
-Frontend: npm install, set NEXT_PUBLIC_WORKER_API_URL, then npm run dev.
+## Deploy the worker
 
-## MT5
+1. In Render, choose New > Blueprint and select repository `razahussain077/razatrades`, branch `main`.
+2. Render detects root `render.yaml` and provisions the FastAPI Docker service. The Blueprint is on the free plan for an initial preview; use an always-on paid service for production continuity.
+3. Copy the generated `BRIDGE_TOKEN` from Render's private environment. Never commit it to GitHub or send it in chat.
+4. Note the worker's HTTPS base URL. Confirm `/health` returns status ok.
+5. In Vercel project settings, set `NEXT_PUBLIC_WORKER_API_URL` to the worker base URL and redeploy. CORS is configured to the production dashboard origin.
 
-Copy bridge/SwiftLaborBridge.mq5 to MT5 Data Folder/MQL5/Experts, compile in MetaEditor, allow the worker HTTPS domain in Tools > Options > Expert Advisors > WebRequest, and attach it to a chart. Configure URL, private bridge token and the broker's exact symbols. The EA publishes OHLC candles only and never places orders. Account passwords must never be shared.
+The worker's current in-memory cache is intentionally simple for the first live proof of concept. A worker restart clears its cache and MT5 must republish snapshots. Before a commercial multi-user rollout, add persistent time-series storage, client-level authentication, per-client feed isolation, rate limits and monitoring.
 
-## Endpoints
+## Connect Equiti MT5
 
-- GET /health
-- GET /api/status
-- GET /api/market/{symbol}?timeframe=M15
-- GET /api/signals?data_mode=broker
-- POST /ingest/mt5 (X-Bridge-Token)
+1. Client logs in to their own Equiti MT5 Desktop terminal. Do not ask them to send account credentials.
+2. In MT5, choose File > Open Data Folder > MQL5 > Experts.
+3. Copy `bridge/SwiftLaborBridge.mq5` to that Experts folder.
+4. Open MetaEditor (F4), open the EA and compile (F7).
+5. In MT5, open Tools > Options > Expert Advisors. Enable "Allow WebRequest for listed URL" and add the worker HTTPS base URL.
+6. Attach the EA to a chart. Set `InpWorkerUrl` and `InpBridgeToken` using values stored privately in Render and the terminal. Leave `InpSymbols` blank to send all Market Watch symbols, or specify exact comma-separated broker names such as `EURUSD.a,XAUUSD,US30`.
+7. Set the timeframe input. Use separate EA instances on separate charts for M15, H1 and H4 if all three are required. Begin with a short symbol list and one timeframe to validate throughput.
+8. Check the Experts tab for successful HTTP responses.
 
-The worker keeps recent candles in memory. A service restart requires MT5 to send the next snapshot to repopulate the cache. Add PostgreSQL/TimescaleDB before commercial history and trade-journal features. Signals require a sweep candidate, same-direction displacement and short-term structure break; scores are evidence scores, not probabilities of profit.
+## Verify live data
+
+- `GET /health`
+- `GET /api/status` — expect `broker_market_streams > 0`, `broker_symbols > 0`
+- `GET /api/universe` — exact symbols read from MT5 Market Watch
+- `GET /api/market/{exact-symbol}?timeframe=M15` — expect `data_mode = broker`
+- `GET /api/signals?data_mode=broker` — only current broker-data assessments
+
+## Current analysis scope
+
+The explainable rules engine evaluates completed broker candles for a 20-bar sweep-and-reclaim candidate, directional displacement, a short-term structure break, a three-candle imbalance candidate, spread relative to ATR and quote freshness. The score is an evidence weighting, not a calibrated probability, expected return or promise of profitability. Liquidity levels shown on the chart are price-extreme candidates, not the global OTC order book, dealer inventory or other traders' stop orders.
+
+There is no connected generative AI model in this build. The dashboard clearly labels the deterministic rules engine instead of pretending that AI commentary has run. An AI commentary layer requires a configured model provider/API key and a separately evaluated prompt and output-validation system.
+
+## Reliability and safety
+
+- EA is read-only; no trade execution code exists.
+- MT5 terminal and its host computer/VPS must remain running for continuous data.
+- A free preview worker is not a production 24/7 guarantee. Use an always-on worker and persistent storage before relying on continuous coverage.
+- Broker CFD/OTC quotes can differ from other brokers and are not a consolidated global market tape.
+- Backtest and forward-test the rules over multiple instruments/regimes before considering any live-trading use.
