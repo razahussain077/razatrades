@@ -144,7 +144,7 @@ class IngestPayload(BaseModel):
     @field_validator("symbol")
     @classmethod
     def validate_symbol(cls, value: str) -> str:
-        value = value.strip().upper()
+        value = value.strip()
         if not SYMBOL_RE.fullmatch(value):
             raise ValueError("symbol contains unsupported characters")
         return value
@@ -197,7 +197,7 @@ class CommentaryRequest(BaseModel):
     @field_validator("symbol")
     @classmethod
     def valid_symbol(cls, value: str) -> str:
-        value = value.strip().upper()
+        value = value.strip()
         if not SYMBOL_RE.fullmatch(value):
             raise ValueError("invalid symbol")
         return value
@@ -795,7 +795,7 @@ async def api_universe(request: Request):
 @app.get("/api/market/{symbol}")
 async def api_market(symbol: str, request: Request, timeframe: str = "M15"):
     tenant_id = await require_dashboard(request)
-    symbol = symbol.strip().upper()
+    symbol = symbol.strip()
     timeframe = timeframe.strip().upper()
     if not SYMBOL_RE.fullmatch(symbol) or timeframe not in FRAMES:
         raise HTTPException(status_code=422, detail="Invalid symbol or timeframe")
