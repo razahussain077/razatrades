@@ -8,6 +8,8 @@ input ENUM_TIMEFRAMES InpTimeframe = PERIOD_M15;
 input int InpBars = 180;
 input int InpTimerSeconds = 15;
 input int InpTimeoutMs = 8000;
+input int InpMaxQuoteAgeSeconds = 300;
+input int InpMaxSymbolsPerInstance = 25;
 
 string TfName(ENUM_TIMEFRAMES tf)
 {
@@ -68,14 +70,19 @@ string Payload(string symbol)
 
    int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-   long spread = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
    MqlTick tick;
    if(!SymbolInfoTick(symbol, tick))
       return "";
+   if(tick.bid <= 0 || tick.ask < tick.bid || point <= 0)
+      return "";
 
    long quoteTime = (long)tick.time;
-   if(quoteTime <= 0)
-      quoteTime = (long)TimeCurrent();
+   if(quoteTime <= 0 || (long)TimeCurrent() - quoteTime > InpMaxQuoteAgeSeconds)
+   {
+      Print("SwiftLabor: stale broker quote skipped: ", symbol);
+      return "";
+   }
+   double spreadPoints = (tick.ask - tick.bid) / point;
 
    string broker = JsonEscape(AccountInfoString(ACCOUNT_SERVER));
    string description = JsonEscape(SymbolInfoString(symbol, SYMBOL_DESCRIPTION));
@@ -90,7 +97,7 @@ string Payload(string symbol)
    payload += "\"ask\":" + DoubleToString(tick.ask, digits) + ",";
    payload += "\"digits\":" + IntegerToString(digits) + ",";
    payload += "\"point\":" + DoubleToString(point, 12) + ",";
-   payload += "\"spread_points\":" + IntegerToString(spread) + ",";
+   payload += "\"spread_points\":" + DoubleToString(spreadPoints, 2) + ",";
    payload += "\"bars\":[";
 
    // MT5 series index 0 is the currently forming candle. Emit oldest -> newest.
@@ -155,13 +162,23 @@ void OnTimer()
    if(InpSymbols == "")
    {
       int total = SymbolsTotal(true);
-      for(int i = 0; i < total; i++)
+      int limit = (int)MathMax(1, InpMaxSymbolsPerInstance);
+      if(total > limit)
+         Print("SwiftLabor: Market Watch has ", total, " symbols; capped at ", limit,
+               ". Set InpSymbols to an explicit approved list.");
+      for(int i = 0; i < total && i < limit; i++)
          SendSymbol(SymbolName(i, true));
    }
    else
    {
       string symbols[];
       int total = StringSplit(InpSymbols, ',', symbols);
+      int limit = (int)MathMax(1, InpMaxSymbolsPerInstance);
+      if(total > limit)
+      {
+         Print("SwiftLabor: explicit symbol list exceeds InpMaxSymbolsPerInstance; excess symbols skipped.");
+         total = limit;
+      }
       for(int i = 0; i < total; i++)
          SendSymbol(symbols[i]);
    }

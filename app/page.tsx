@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   Activity, AlertTriangle, BrainCircuit, CandlestickChart, Clock3, Gauge,
   LayoutDashboard, Radio, ScanSearch, Search, Settings2, ShieldCheck,
-  Target, Waves, RefreshCw, ChevronRight
+  Target, Waves, RefreshCw, ChevronRight, LogOut
 } from "lucide-react";
 import {
   CandlestickSeries, ColorType, CrosshairMode, createChart, type Time
@@ -26,14 +26,17 @@ type Status = {
   process?: string; data_mode?: string; broker_market_streams?: number; broker_symbols?: number;
   fresh_quotes?: number; symbols?: string[]; last_feed_at?: string | null;
   last_scan_at?: string | null; scan_interval_seconds?: number; execution_mode?: string;
-  orders_enabled?: boolean; engine?: string;
+  orders_enabled?: boolean; engine?: string; ai_commentary?: boolean;
 };
+type Commentary = {
+  summary: string; observations: string[]; risks: string[];
+  invalidation_context: string; limitations: string;
+};
+
 const FRAMES = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"];
-const API = (process.env.NEXT_PUBLIC_WORKER_API_URL || "").replace(/\/$/, "");
 const NAV = [
-  ["Overview", LayoutDashboard], ["Market scanner", ScanSearch],
-  ["Liquidity map", Waves], ["Signal center", Target],
-  ["AI analyst", BrainCircuit], ["Risk & journal", ShieldCheck],
+  ["Overview", LayoutDashboard],
+  ["AI analyst", BrainCircuit],
 ] as const;
 const money = (value: number | null | undefined, digits = 5) =>
   typeof value === "number" && Number.isFinite(value) ? value.toFixed(Math.max(0, Math.min(10, digits))) : "—";
@@ -52,6 +55,14 @@ export default function Home() {
   const [chartMeta, setChartMeta] = useState<{source:string;updated:string;quoteAge?:number;bid?:number;ask?:number;spread?:number;digits?:number}>({source:"Waiting for broker feed",updated:"No broker candles received"});
   const [loading, setLoading] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [authReady, setAuthReady] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [commentary, setCommentary] = useState<Commentary | null>(null);
+  const [commentaryLoading, setCommentaryLoading] = useState(false);
+  const [commentaryError, setCommentaryError] = useState("");
   const chartEl = useRef<HTMLDivElement>(null);
 
   const selected = universe.find(item => item.symbol === symbol);
@@ -64,15 +75,28 @@ export default function Home() {
   const workerOnline = status?.process === "online";
 
   useEffect(() => {
-    if (!API) return;
+    let stopped = false;
+    fetch("/api/auth/login", { method: "GET", cache: "no-store" })
+      .then(response => response.ok ? response.json() : { authenticated: false })
+      .then(data => { if (!stopped) { setAuthenticated(Boolean(data.authenticated)); setAuthReady(true); } })
+      .catch(() => { if (!stopped) setAuthReady(true); });
+    return () => { stopped = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!authenticated) return;
     let stopped = false;
     const refresh = async () => {
       try {
         const [s, u, a] = await Promise.all([
-          fetch(API + "/api/status", { cache: "no-store" }),
-          fetch(API + "/api/universe", { cache: "no-store" }),
-          fetch(API + "/api/signals?data_mode=broker", { cache: "no-store" }),
+          fetch("/api/status", { cache: "no-store" }),
+          fetch("/api/universe", { cache: "no-store" }),
+          fetch("/api/signals?data_mode=broker", { cache: "no-store" }),
         ]);
+        if ([s, u, a].some(response => response.status === 401)) {
+          setAuthenticated(false);
+          return;
+        }
         if (!s.ok || !u.ok || !a.ok) throw new Error("Worker API returned an error");
         const [nextStatus, nextUniverse, nextSignals] = await Promise.all([s.json(), u.json(), a.json()]);
         if (stopped) return;
@@ -94,10 +118,10 @@ export default function Home() {
     void refresh();
     const timer = setInterval(refresh, 15000);
     return () => { stopped = true; clearInterval(timer); };
-  }, [refreshNonce]);
+  }, [authenticated, refreshNonce]);
 
   useEffect(() => {
-    if (!chartEl.current) return;
+    if (!authenticated || !chartEl.current) return;
     let stopped = false;
     const chart = createChart(chartEl.current, {
       width: chartEl.current.clientWidth,
@@ -117,15 +141,16 @@ export default function Home() {
     let lowLine: ReturnType<typeof candles.createPriceLine> | null = null;
 
     const refreshChart = async () => {
-      if (!API || !symbol) {
+      if (!symbol) {
         candles.setData([]);
         setChartBars(false);
-        setChartMeta({source:"Backend not configured",updated:"Set NEXT_PUBLIC_WORKER_API_URL to enable broker data"});
+        setChartMeta({source:"Waiting for broker feed",updated:"Select a broker instrument"});
         return;
       }
       setLoading(true);
       try {
-        const response = await fetch(API + "/api/market/" + encodeURIComponent(symbol) + "?timeframe=" + frame, { cache: "no-store" });
+        const response = await fetch("/api/market/" + encodeURIComponent(symbol) + "?timeframe=" + frame, { cache: "no-store" });
+        if (response.status === 401) { setAuthenticated(false); return; }
         if (!response.ok) throw new Error("No data");
         const data = await response.json();
         if (stopped) return;
@@ -170,11 +195,85 @@ export default function Home() {
     });
     resize.observe(chartEl.current);
     return () => { stopped = true; clearInterval(timer); resize.disconnect(); chart.remove(); };
-  }, [symbol, frame, refreshNonce]);
+  }, [authenticated, symbol, frame, refreshNonce, section]);
 
   const changeSection = (name: string) => setSection(name);
   const heading = section === "Overview" ? "Market overview" : section;
-  const brokerLabel = feedConnected ? "Equiti broker feed connected" : workerOnline ? "Worker online · awaiting MT5" : API ? "Worker unavailable" : "Backend not configured";
+  const brokerLabel = feedConnected ? "Equiti broker feed connected" : workerOnline ? "Worker online · awaiting MT5" : "Worker unavailable";
+
+  const runCommentary = async () => {
+    setCommentaryLoading(true);
+    setCommentaryError("");
+    setCommentary(null);
+    try {
+      const response = await fetch("/api/ai/commentary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, timeframe: frame }),
+      });
+      const data = await response.json();
+      if (response.status === 401) { setAuthenticated(false); return; }
+      if (!response.ok) throw new Error(data.detail || data.error || "AI commentary is unavailable");
+      setCommentary(data.commentary as Commentary);
+    } catch (error) {
+      setCommentaryError(error instanceof Error ? error.message : "Unable to generate commentary");
+    } finally {
+      setCommentaryLoading(false);
+    }
+  };
+
+  const submitLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoginLoading(true);
+    setLoginError("");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Sign-in failed");
+      setPassword("");
+      setAuthenticated(true);
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "Unable to sign in");
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    await fetch("/api/auth/login", { method: "DELETE" });
+    setAuthenticated(false);
+    setStatus(null);
+    setUniverse([]);
+    setSignals([]);
+  };
+
+  if (!authReady) {
+    return <main style={{minHeight:"100vh",display:"grid",placeItems:"center",background:"#f5f7fb",color:"#526174",fontFamily:"Arial,sans-serif"}}>Loading secure workspace…</main>;
+  }
+
+  if (!authenticated) {
+    return (
+      <main style={{minHeight:"100vh",display:"grid",placeItems:"center",padding:24,background:"linear-gradient(135deg,#f7f9fd,#edf3ff)",fontFamily:"Arial,sans-serif",color:"#17243a"}}>
+        <form onSubmit={submitLogin} style={{width:"min(100%,420px)",background:"#fff",border:"1px solid #e5ebf4",borderRadius:18,padding:34,boxShadow:"0 18px 55px rgba(22,48,88,.09)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:32}}>
+            <div style={{width:42,height:42,borderRadius:12,background:"#064fc4",color:"#fff",display:"grid",placeItems:"center"}}><Activity size={22}/></div>
+            <div><b style={{fontSize:19}}>SwiftLabor<span style={{color:"#0755ce"}}>.ai</span></b><div style={{fontSize:10,letterSpacing:1.5,color:"#718096",marginTop:4}}>PRIVATE MARKET INTELLIGENCE</div></div>
+          </div>
+          <div style={{fontSize:11,letterSpacing:1.4,color:"#63748b",fontWeight:700}}>SECURE CLIENT WORKSPACE</div>
+          <h1 style={{fontSize:28,margin:"9px 0 8px"}}>Sign in</h1>
+          <p style={{fontSize:14,lineHeight:1.6,color:"#6b7a90",marginBottom:24}}>Enter your workspace password to access broker market research.</p>
+          <label htmlFor="workspace-password" style={{display:"block",fontSize:12,fontWeight:700,marginBottom:8}}>Workspace password</label>
+          <input id="workspace-password" type="password" value={password} autoComplete="current-password" onChange={event => setPassword(event.target.value)} required maxLength={256} style={{width:"100%",boxSizing:"border-box",padding:"13px 14px",border:"1px solid #d8e0eb",borderRadius:9,fontSize:15,outlineColor:"#0755ce"}}/>
+          {loginError && <p role="alert" style={{fontSize:13,color:"#b42318",margin:"12px 0 0"}}>{loginError}</p>}
+          <button type="submit" disabled={loginLoading || !password} style={{width:"100%",marginTop:18,padding:14,border:0,borderRadius:9,background:"#0755ce",color:"#fff",fontWeight:700,cursor:"pointer",opacity:loginLoading || !password ? .6 : 1}}>{loginLoading ? "Signing in…" : "Access workspace"}</button>
+          <p style={{fontSize:11,color:"#8995a6",lineHeight:1.5,marginTop:22}}>Broker credentials are never requested here. This workspace is read-only and does not place trades.</p>
+        </form>
+      </main>
+    );
+  }
 
   return (
     <main className="app">
@@ -182,16 +281,10 @@ export default function Home() {
         <div className="brand"><i><Activity /></i><div><b>SwiftLabor<span>.ai</span></b><small>MARKET INTELLIGENCE</small></div></div>
         <label>WORKSPACE</label>
         <div className="desk"><b>Institutional desk</b><small>MT5-first market research</small></div>
-        <label>ANALYZE</label>
-        {NAV.slice(0,4).map(([name, Icon]) => (
+        <label>RESEARCH</label>
+        {NAV.map(([name, Icon]) => (
           <button className={"nav " + (section === name ? "active" : "")} key={name} onClick={() => changeSection(name)}>
-            <Icon size={16}/>{name}
-          </button>
-        ))}
-        <label className="sys">INTELLIGENCE</label>
-        {NAV.slice(4).map(([name, Icon]) => (
-          <button className={"nav " + (section === name ? "active" : "")} key={name} onClick={() => changeSection(name)}>
-            <Icon size={16}/>{name}{name === "AI analyst" && <em>RULES</em>}
+            <Icon size={16}/>{name}{name === "AI analyst" && <em>OPTIONAL AI</em>}
           </button>
         ))}
         <div className="sidebottom">
@@ -207,7 +300,7 @@ export default function Home() {
       <section className="main">
         <header><span>Workspace <b>/ {section}</b></span>
           <div className={"status " + (feedConnected ? "live" : "demo")}><i/>{brokerLabel}</div>
-          <div className="user">SL</div>
+          <button onClick={logout} title="Sign out" style={{display:"flex",alignItems:"center",gap:7,border:"1px solid #e2e8f0",background:"#fff",borderRadius:8,padding:"8px 11px",color:"#5a6a80",fontSize:12,cursor:"pointer"}}><LogOut size={14}/> Sign out</button>
         </header>
         <div className="content">
           <div className="heading">
@@ -236,7 +329,7 @@ export default function Home() {
           {section === "Settings" ? (
             <section className="panel setup">
               <small>CONNECTION STATUS</small><h2>Equiti MT5 bridge</h2>
-              <p>Backend: {API || "NEXT_PUBLIC_WORKER_API_URL is not set"}</p>
+              <p>Backend: Server-side authenticated connection (worker URL is private)</p>
               <p>Worker: {workerOnline ? "Online" : "Not reachable"} · MT5 streams: {streamCount}</p>
               <p>Broker server: {selected?.broker_server || "Will be identified from the connected MT5 terminal"}</p>
               <p>Bridge is read-only. MT5 login passwords are never required by SwiftLabor.</p>
@@ -247,7 +340,24 @@ export default function Home() {
               <small><BrainCircuit size={13}/> EXPLAINABLE MARKET ANALYSIS</small><h2>Rules engine status</h2>
               <p>{status?.engine || "Analysis worker is not reporting an active engine."}</p>
               <p>This build evaluates completed broker candles for a 20-bar sweep-and-reclaim candidate, directional displacement, short-term structure break, imbalance candidate, and spread relative to ATR.</p>
-              <p>There is no generative AI commentary connection configured yet. The interface does not pretend a language model has reviewed the market. An AI commentary layer can be added once a secure model API is configured.</p>
+              <p>{status?.ai_commentary ? "On-demand AI commentary is enabled when requested. The deterministic signal engine remains authoritative." : "Generative AI commentary is not configured. This screen reports the deterministic rules engine only."}</p>
+              <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",margin:"18px 0"}}>
+                <button onClick={() => void runCommentary()} disabled={!status?.ai_commentary || !feedConnected || commentaryLoading} style={{border:0,borderRadius:8,padding:"11px 15px",background:!status?.ai_commentary || !feedConnected ? "#aab7c9" : "#0755ce",color:"#fff",fontWeight:700,cursor:!status?.ai_commentary || !feedConnected ? "not-allowed" : "pointer"}}>
+                  {commentaryLoading ? "Reviewing broker snapshot…" : "Generate AI commentary"}
+                </button>
+                <span style={{fontSize:12,color:"#718096"}}>{symbol} · {frame} · broker data only</span>
+              </div>
+              {commentaryError && <p role="alert" style={{color:"#b42318"}}>{commentaryError}</p>}
+              {commentary && <div style={{border:"1px solid #e2e9f2",borderRadius:12,padding:18,marginTop:14,background:"#fbfcfe"}}>
+                <small style={{fontWeight:700,letterSpacing:1,color:"#64748b"}}>AI RESEARCH COMMENTARY · NOT A TRADE INSTRUCTION</small>
+                <p style={{fontSize:15,lineHeight:1.7,color:"#28384d"}}>{commentary.summary}</p>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:14,marginTop:12}}>
+                  <div><b style={{fontSize:12}}>OBSERVATIONS</b>{commentary.observations.map((item,i)=><p key={i} style={{fontSize:13,lineHeight:1.55,color:"#5d6b7f"}}>• {item}</p>)}</div>
+                  <div><b style={{fontSize:12}}>RISKS</b>{commentary.risks.map((item,i)=><p key={i} style={{fontSize:13,lineHeight:1.55,color:"#5d6b7f"}}>• {item}</p>)}</div>
+                </div>
+                <p style={{fontSize:13,lineHeight:1.55,color:"#5d6b7f"}}><b>Invalidation context:</b> {commentary.invalidation_context || "Not defined by this analysis."}</p>
+                <p style={{fontSize:12,lineHeight:1.55,color:"#8591a2"}}><b>Limitations:</b> {commentary.limitations}</p>
+              </div>}
               <p>Scores represent rule evidence weights, not win probabilities, certainty, or expected returns.</p>
             </section>
           ) : section === "Risk & journal" ? (
