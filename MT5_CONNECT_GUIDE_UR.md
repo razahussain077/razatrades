@@ -55,6 +55,7 @@ Login ke baad ye confirm karein:
 ## Important limits
 
 - MT5 terminal aur client ka Windows PC/VPS on rehna lazmi hai. Backend paid ho tab bhi band MT5 se data nahi ayega.
+- PostgreSQL paid plan hai, database sirf internal Render network se accessible hai aur storage autoscaling enabled hai. Render paid Postgres ke liye PITR backups deta hai; recovery window Hobby workspace par 3 din aur Pro+ par 7 din hoti hai. Long-term backup ke liye alag logical exports aur restore test rakhain. HA standby ke liye Pro workspace aur qualifying Pro database plan chahiye, aur doosra database instance bill hota hai; default Blueprint mein HA off hai.
 - PostgreSQL data persist karta hai; worker RAM cache par depend nahi karta.
 - AI commentary optional hai. Render par AI Gateway API key aur exact model ID configure kiye baghair disabled rahegi. Rules engine phir bhi kaam karega.
 - Score evidence weight hai, profit probability nahi. Yeh setup BUY/SELL instruction, entry, stop, target ya position size generate nahi karta.

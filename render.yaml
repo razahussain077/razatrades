@@ -38,7 +38,10 @@ services:
 databases:
   - name: swiftlabor-market-db
     region: singapore
-    plan: 1g
-    postgresMajorVersion: "17"
+    plan: 0.5c-1g
+    postgresMajorVersion: "18"
+    diskSizeGB: 15
+    storageAutoscalingEnabled: true
+    ipAllowList: []
     databaseName: swiftlabor_market
     user: swiftlabor

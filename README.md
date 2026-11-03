@@ -99,6 +99,7 @@ Forex/CFD is OTC. This system does not have the global FX order book, dealer inv
 - Bridge payload size, candle count, symbol names and timeframe are bounded/validated.
 - Read-only EA contains no order send/modify/close calls.
 - Worker health and readiness endpoints are separate.
+- PostgreSQL is a paid Render instance with an internal-only IP allowlist and storage autoscaling; Render continuously backs up paid Postgres with PITR. Recovery window varies by workspace (Hobby 3 days, Pro+ 7 days). Trigger and test separate logical exports for long-term disaster recovery. High availability standby requires a Pro workspace and a qualifying Pro database plan, and bills a second database instance; it is not enabled by this default Blueprint.
 - CI runs Python unit/API tests and TypeScript/build checks on pushes and pull requests.
 - Set up Vercel login-path rate limiting, Render/Vercel alerts, database backups/PITR appropriate to the selected plan, dependency updates and a documented secret-rotation process before real client production use.
 - MT5 must remain logged in and running on an always-on host. A paid backend does not keep the client's terminal alive.
