@@ -49,7 +49,7 @@ In Vercel → project `swiftlabor-forex-intelligence-app` → Settings → Envir
 
 Do not use a `NEXT_PUBLIC_` prefix for any of these values. The worker URL and API token must not be exposed to browser JavaScript. Redeploy Vercel after saving the variables.
 
-The dashboard login uses an eight-hour signed HttpOnly session. Deploy a Vercel Firewall rate-limit rule for `POST /api/auth/login` before exposing the login URL publicly; the login password is not an API token and must not be reused elsewhere.
+The dashboard login uses an eight-hour signed HttpOnly session. A Vercel Firewall rule is configured to deny more than 10 POST requests per IP in 60 seconds to `/api/auth/login`. The login password is not an API token and must not be reused elsewhere.
 
 ### 3. Connect the client's Equiti MT5 terminal
 
@@ -94,7 +94,7 @@ Forex/CFD is OTC. This system does not have the global FX order book, dealer inv
 ## Reliability, security and operations
 
 - Backend is fail-closed without PostgreSQL and long random API tokens.
-- Data is persisted in PostgreSQL; signal snapshots are updated per completed candle.
+- Data is persisted in PostgreSQL; signal snapshots are updated per completed candle. Repeated MT5 polls update the current candle and only new bars instead of rewriting the full candle history on every poll.
 - Stale quotes are excluded using both MT5 quote timestamp and worker receipt timestamp; repeated upload of an old quote does not make it fresh.
 - Bridge payload size, candle count, symbol names and timeframe are bounded/validated.
 - Read-only EA contains no order send/modify/close calls.

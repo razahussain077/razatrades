@@ -317,7 +317,7 @@ class Store:
         pool = self.require_pool()
         async with pool.acquire() as conn:
             async with conn.transaction():
-                await conn.execute("""
+                stream_result = await conn.execute("""
                     INSERT INTO market_streams (
                         tenant_id, symbol, timeframe, asset_class, description,
                         broker_server, quote_time, bid, ask, digits, point,
@@ -331,25 +331,42 @@ class Store:
                         bid=EXCLUDED.bid, ask=EXCLUDED.ask,
                         digits=EXCLUDED.digits, point=EXCLUDED.point,
                         spread_points=EXCLUDED.spread_points,
-                        last_bar_time=EXCLUDED.last_bar_time,
+                        last_bar_time=GREATEST(market_streams.last_bar_time, EXCLUDED.last_bar_time),
                         received_at=NOW()
+                    WHERE EXCLUDED.quote_time >= market_streams.quote_time
                 """, tenant_id, payload.symbol, payload.timeframe, payload.asset_class,
                     payload.description, payload.broker_server, payload.quote_time,
                     payload.bid, payload.ask, payload.digits, payload.point,
                     payload.spread_points, payload.bars[-1].time)
-                await conn.executemany("""
-                    INSERT INTO market_candles (
-                        tenant_id, symbol, timeframe, candle_time,
-                        open, high, low, close, tick_volume
-                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-                    ON CONFLICT (tenant_id, symbol, timeframe, candle_time) DO UPDATE SET
-                        open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
-                        close=EXCLUDED.close, tick_volume=EXCLUDED.tick_volume
-                """, [
-                    (tenant_id, payload.symbol, payload.timeframe, bar.time,
-                     bar.open, bar.high, bar.low, bar.close, bar.tick_volume)
-                    for bar in payload.bars[-MAX_BARS:]
-                ])
+                # Ignore delayed snapshots instead of allowing them to roll back a fresh quote.
+                if stream_result.endswith(" 0"):
+                    return
+
+                latest_saved_bar = await conn.fetchval("""
+                    SELECT MAX(candle_time) FROM market_candles
+                    WHERE tenant_id=$1 AND symbol=$2 AND timeframe=$3
+                """, tenant_id, payload.symbol, payload.timeframe)
+                incoming_bars = payload.bars[-MAX_BARS:]
+                # First connection persists history; routine updates only touch the current
+                # forming candle and any newly completed candle, not the full history on every poll.
+                bars_to_write = [
+                    bar for bar in incoming_bars
+                    if latest_saved_bar is None or bar.time >= latest_saved_bar
+                ]
+                if bars_to_write:
+                    await conn.executemany("""
+                        INSERT INTO market_candles (
+                            tenant_id, symbol, timeframe, candle_time,
+                            open, high, low, close, tick_volume
+                        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                        ON CONFLICT (tenant_id, symbol, timeframe, candle_time) DO UPDATE SET
+                            open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low,
+                            close=EXCLUDED.close, tick_volume=EXCLUDED.tick_volume
+                    """, [
+                        (tenant_id, payload.symbol, payload.timeframe, bar.time,
+                         bar.open, bar.high, bar.low, bar.close, bar.tick_volume)
+                        for bar in bars_to_write
+                    ])
 
     async def active_tenants(self) -> list[str]:
         pool = self.require_pool()

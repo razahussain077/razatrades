@@ -27,7 +27,7 @@ Vercel project `swiftlabor-forex-intelligence-app` → Settings → Environment 
 
 Kisi bhi secret ka naam `NEXT_PUBLIC_` se shuru na karein. Is se secret browser code mein expose ho sakta hai. Variables save kar ke Vercel ko redeploy karein.
 
-Dashboard login 8-hour signed HttpOnly session cookie use karta hai. Public access dene se pehle Vercel Firewall par `POST /api/auth/login` ke liye rate-limit rule configure karein.
+Dashboard login 8-hour signed HttpOnly session cookie use karta hai. Vercel Firewall par login endpoint ke liye per-IP rule configured hai: 60 seconds mein 10 se zyada POST requests deny hoti hain.
 
 ## 3. Client ke Equiti MT5 mein bridge install karein
 
@@ -56,7 +56,7 @@ Login ke baad ye confirm karein:
 
 - MT5 terminal aur client ka Windows PC/VPS on rehna lazmi hai. Backend paid ho tab bhi band MT5 se data nahi ayega.
 - PostgreSQL paid plan hai, database sirf internal Render network se accessible hai aur storage autoscaling enabled hai. Render paid Postgres ke liye PITR backups deta hai; recovery window Hobby workspace par 3 din aur Pro+ par 7 din hoti hai. Long-term backup ke liye alag logical exports aur restore test rakhain. HA standby ke liye Pro workspace aur qualifying Pro database plan chahiye, aur doosra database instance bill hota hai; default Blueprint mein HA off hai.
-- PostgreSQL data persist karta hai; worker RAM cache par depend nahi karta.
+- PostgreSQL data persist karta hai; worker RAM cache par depend nahi karta. MT5 ke har poll par poori 200-candle history dobara write nahi hoti; pehli dafa history save hoti hai, us ke baad current/new candles update hoti hain.
 - AI commentary optional hai. Render par AI Gateway API key aur exact model ID configure kiye baghair disabled rahegi. Rules engine phir bhi kaam karega.
 - Score evidence weight hai, profit probability nahi. Yeh setup BUY/SELL instruction, entry, stop, target ya position size generate nahi karta.
 - Forex/CFD OTC hai. System global FX order book, dealer inventory ya hidden stop orders nahi dekh sakta. Chart ke highs/lows broker candles ke reference points hain.
