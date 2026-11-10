@@ -76,6 +76,41 @@ After signing into the dashboard, verify:
 
 Browser dashboard endpoints are protected by a login session. Worker APIs require a dashboard token; MT5 ingestion requires a separate bridge token. PostgreSQL applies tenant-scoped request counters and feed/signal queries are tenant-filtered. For more than one client, create unique token-to-tenant mappings with `DASHBOARD_TOKENS_JSON` and `BRIDGE_TOKENS_JSON`; do not share client tokens.
 
+## Cross-asset reference data and correlation pipeline
+
+The worker can ingest EUR/USD and GBP/USD M5 reference candles from OANDA v20 or Massive (formerly Polygon). Set `REFERENCE_PROVIDER=auto` to prefer OANDA when `OANDA_TOKEN` exists, otherwise Massive when `MASSIVE_API_KEY` exists. The worker polls on a configurable interval and persists normalized completed candles in PostgreSQL. Provider failures are recorded and do not create placeholder prices.
+
+### Configure the reference feed
+
+Set these server-side variables in Render (never in the browser or a public `NEXT_PUBLIC_*` variable):
+
+| Variable | Purpose |
+|---|---|
+| `REFERENCE_PROVIDER` | `auto`, `oanda` or `massive` |
+| `OANDA_ENV` | `practice` or `live` |
+| `OANDA_TOKEN` | OANDA personal access token |
+| `MASSIVE_API_KEY` | Optional Massive forex API key |
+| `REFERENCE_CANDLE_COUNT` | 100–5000, default 2500 |
+| `REFERENCE_POLL_SECONDS` | Poll interval; default 60 seconds |
+| `MAX_REFERENCE_AGE_SECONDS` | Maximum reference-bar age; default 900 seconds |
+| `DXY_MT5_SYMBOL` | Exact DXY/index symbol from the broker's Market Watch |
+
+OANDA is the preferred first integration. Its candles include a midpoint stream and separate bid/ask close components when requested. Massive's forex aggregates are built from bid/ask quote data, not a consolidated tape of executed FX trades; Basic access is rate-limited and may not provide real-time streaming. Review the entitlement attached to your account before using it for live monitoring.
+
+### DXY broker connection
+
+DXY is not synthesized. It must be an actual index instrument exposed by the client's Equiti MT5 Market Watch, with its exact symbol and quote basis verified. The existing bridge sends one timeframe per EA instance. Run a separate bridge instance with `InpTimeframe=PERIOD_M5` and `InpSymbols=<exact-DXY-symbol>` so the worker receives synchronized M5 DXY bars. Existing M15/H1/H4 instances can continue for chart analysis.
+
+### Correlation API and dashboard
+
+Authenticated dashboard route: `GET /api/correlation` (through the Vercel session proxy). It returns feed status, ages, common synchronized M5 observations, and rolling Pearson correlations for M5, M15 and H1. Each timeframe exposes 20- and 60-return windows. Missing intervals are not forward-filled; time buckets are emitted only when all constituent M5 bars exist. Values are returned as `null` when the series are stale or sample counts are insufficient.
+
+The dashboard's **Macro & SMT** workspace shows the DXY and FX feed state, pairwise correlations, and data-quality caveats. Correlation is a statistical relationship, not causation and not SMT divergence by itself. EUR/USD is a major component of DXY, so EUR/USD–DXY inverse correlation is partly mechanical. Relative swing analysis must remain a separate calculation stage.
+
+### Tests
+
+Run `python -m unittest discover -s tests -v` from `worker/`. Tests cover OHLC validation, incomplete-bar filtering, bid/ask preservation, inverse return correlation, zero variance and missing time intervals.
+
 ## Analysis and AI boundaries
 
 The deterministic rules engine looks for:
