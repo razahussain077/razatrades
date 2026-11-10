@@ -89,13 +89,24 @@ Set these server-side variables in Render (never in the browser or a public `NEX
 | `REFERENCE_PROVIDER` | `auto`, `oanda` or `massive` |
 | `OANDA_ENV` | `practice` or `live` |
 | `OANDA_TOKEN` | OANDA personal access token |
-| `MASSIVE_API_KEY` | Optional Massive forex API key |
+| `MASSIVE_API_KEY` / `POLYGON_API_KEY` | Optional Massive (formerly Polygon) forex API key; either variable name is accepted |
 | `REFERENCE_CANDLE_COUNT` | 100–5000, default 2500 |
 | `REFERENCE_POLL_SECONDS` | Poll interval; default 60 seconds |
 | `MAX_REFERENCE_AGE_SECONDS` | Maximum reference-bar age; default 900 seconds |
 | `DXY_MT5_SYMBOL` | Exact DXY/index symbol from the broker's Market Watch |
 
-OANDA is the preferred first integration. Its candles include a midpoint stream and separate bid/ask close components when requested. Massive's forex aggregates are built from bid/ask quote data, not a consolidated tape of executed FX trades; Basic access is rate-limited and may not provide real-time streaming. Review the entitlement attached to your account before using it for live monitoring.
+OANDA is the preferred first integration. Its candles include a midpoint stream and separate bid/ask close components when requested. Massive (formerly Polygon) forex aggregates are built from bid/ask quote data, not a consolidated tape of executed FX trades; its Basic tier is rate-limited and should not be assumed to provide a real-time streaming entitlement. Review the entitlement attached to your account before using it for live monitoring.
+
+### Verify the exact Equiti DXY symbol
+
+On the Windows host running the client's MT5 terminal, install the MetaTrader5 Python package and run:
+
+```powershell
+py -m pip install MetaTrader5
+py tools/inspect_mt5_symbols.py
+```
+
+The script only lists symbol metadata. Use the exact returned Market Watch symbol for `DXY_MT5_SYMBOL`; if no matching symbol exists, ask Equiti for the correct index instrument. Do not guess a symbol or construct synthetic DXY from EUR/USD.
 
 ### DXY broker connection
 
