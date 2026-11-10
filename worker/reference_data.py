@@ -347,6 +347,7 @@ def _frame_metrics(series: dict[str, dict[int, float]], minutes: int) -> dict[st
 async def correlation_snapshot(pool: Any, tenant_id: str) -> dict[str, Any]:
     provider = selected_provider()
     dxy_symbol = os.getenv("DXY_MT5_SYMBOL", "").strip()
+    dxy_stream = None
     async with pool.acquire() as conn:
         reference_rows = await conn.fetch("""
             SELECT symbol,candle_time,close,price_basis
@@ -362,6 +363,12 @@ async def correlation_snapshot(pool: Any, tenant_id: str) -> dict[str, Any]:
                 FROM market_candles
                 WHERE tenant_id=$1 AND symbol=$2 AND timeframe='M5'
                 ORDER BY candle_time DESC LIMIT 1200
+            """, tenant_id, dxy_symbol)
+            dxy_stream = await conn.fetchrow("""
+                SELECT quote_time,
+                       EXTRACT(EPOCH FROM received_at)::BIGINT AS received_at_epoch
+                FROM market_streams
+                WHERE tenant_id=$1 AND symbol=$2 AND timeframe='M5'
             """, tenant_id, dxy_symbol)
         status_rows = await conn.fetch("""
             SELECT provider,symbol,configured,last_success_at,last_candle_time,last_error
@@ -379,6 +386,12 @@ async def correlation_snapshot(pool: Any, tenant_id: str) -> dict[str, Any]:
     for row in dxy_rows:
         series["DXY"][int(row["candle_time"])] = float(row["close"])
 
+    now = int(datetime.now(timezone.utc).timestamp())
+    max_quote_age = max(60, int(os.getenv("MAX_QUOTE_AGE_SECONDS", "300")))
+    stale_after = max(30, int(os.getenv("STALE_AFTER_SECONDS", "180")))
+    quote_age = max(0, now - int(dxy_stream["quote_time"])) if dxy_stream else None
+    receive_age = max(0, now - int(dxy_stream["received_at_epoch"])) if dxy_stream else None
+
     feeds = {
         "EUR_USD": {"provider": provider, "configured": bool(os.getenv("OANDA_TOKEN") if provider == "oanda" else os.getenv("MASSIVE_API_KEY"))},
         "GBP_USD": {"provider": provider, "configured": bool(os.getenv("OANDA_TOKEN") if provider == "oanda" else os.getenv("MASSIVE_API_KEY"))},
@@ -393,7 +406,6 @@ async def correlation_snapshot(pool: Any, tenant_id: str) -> dict[str, Any]:
                 "last_candle_time": int(row["last_candle_time"]) if row["last_candle_time"] else None,
                 "last_error": row["last_error"],
             })
-    now = int(datetime.now(timezone.utc).timestamp())
     for key, values in series.items():
         latest = max(values) if values else None
         age = now - latest if latest else None
@@ -401,6 +413,14 @@ async def correlation_snapshot(pool: Any, tenant_id: str) -> dict[str, Any]:
         feeds[key]["last_candle_time"] = latest
         feeds[key]["age_seconds"] = max(0, age) if age is not None else None
         feeds[key]["fresh"] = bool(age is not None and age <= MAX_AGE_SECONDS)
+    feeds["DXY"]["quote_age_seconds"] = quote_age
+    feeds["DXY"]["receive_age_seconds"] = receive_age
+    feeds["DXY"]["fresh"] = bool(
+        feeds["DXY"]["fresh"]
+        and dxy_stream
+        and quote_age is not None and quote_age <= max_quote_age
+        and receive_age is not None and receive_age <= stale_after
+    )
 
     common = set(series["EUR_USD"]).intersection(series["GBP_USD"], series["DXY"])
     data_ready = all(feeds[key]["fresh"] for key in feeds) and len(common) >= 80
