@@ -354,7 +354,7 @@ async def correlation_snapshot(pool: Any, tenant_id: str) -> dict[str, Any]:
             FROM reference_candles
             WHERE provider=$1 AND timeframe='M5'
               AND symbol IN ('EUR_USD','GBP_USD')
-            ORDER BY candle_time DESC LIMIT 1200
+            ORDER BY candle_time DESC LIMIT 10000
         """, provider if provider != "none" else "oanda")
         dxy_rows = []
         if dxy_symbol:
