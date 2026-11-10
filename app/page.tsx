@@ -70,6 +70,8 @@ export default function Home() {
   const [universe, setUniverse] = useState<MarketItem[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [macro, setMacro] = useState<CorrelationSnapshot | null>(null);
+  const [syncingReferences, setSyncingReferences] = useState(false);
+  const [referenceSyncMessage, setReferenceSyncMessage] = useState("");
   const [search, setSearch] = useState("");
   const [chartBars, setChartBars] = useState(false);
   const [chartMeta, setChartMeta] = useState<{source:string;updated:string;quoteAge?:number;bid?:number;ask?:number;spread?:number;digits?:number}>({source:"Waiting for broker feed",updated:"No broker candles received"});
@@ -224,6 +226,24 @@ export default function Home() {
   const heading = section === "Overview" ? "Market overview" : section;
   const brokerLabel = feedConnected ? "Equiti broker feed connected" : workerOnline ? "Worker online · awaiting MT5" : "Worker unavailable";
 
+  const syncReferenceData = async () => {
+    setSyncingReferences(true);
+    setReferenceSyncMessage("");
+    try {
+      const response = await fetch("/api/reference/sync", { method: "POST" });
+      const data = await response.json();
+      if (response.status === 401) { setAuthenticated(false); return; }
+      if (!response.ok) throw new Error(data.detail || data.error || "Reference sync failed");
+      const successful = (data.results || []).filter((item: {status: string}) => item.status === "ok").length;
+      setReferenceSyncMessage(successful + " reference instrument(s) synchronized from " + data.provider + ".");
+      setRefreshNonce(value => value + 1);
+    } catch (error) {
+      setReferenceSyncMessage(error instanceof Error ? error.message : "Reference sync failed");
+    } finally {
+      setSyncingReferences(false);
+    }
+  };
+
   const runCommentary = async () => {
     setCommentaryLoading(true);
     setCommentaryError("");
@@ -358,8 +378,15 @@ export default function Home() {
                 <Metric icon={<Gauge/>} title="COMMON M5 BARS" value={String(macro?.common_m5_bars || 0)} note="Synchronized observations across all three feeds"/>
               </div>
               <section className="panel setup">
-                <small>CROSS-ASSET QUANTITATIVE MONITOR</small>
-                <h2>Rolling return correlation</h2>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                  <div><small>CROSS-ASSET QUANTITATIVE MONITOR</small>
+                    <h2>Rolling return correlation</h2></div>
+                  <button onClick={() => void syncReferenceData()} disabled={syncingReferences || macro?.provider === "none"}
+                    style={{border:0,borderRadius:8,padding:"10px 13px",background:syncingReferences || macro?.provider === "none" ? "#aab7c9" : "#0755ce",color:"#fff",fontWeight:700,cursor:syncingReferences || macro?.provider === "none" ? "not-allowed" : "pointer"}}>
+                    {syncingReferences ? "Syncing reference data…" : "Sync reference data"}
+                  </button>
+                </div>
+                {referenceSyncMessage && <p role="status" style={{fontSize:12,color:referenceSyncMessage.includes("failed") ? "#b42318" : "#15835f"}}>{referenceSyncMessage}</p>}
                 <p>Calculated from synchronized log returns. Missing intervals are not filled with synthetic prices. Correlation is context, not an entry signal or proof of SMT divergence.</p>
                 {macro?.correlations ? ["M5", "M15", "H1"].map(period => {
                   const frameData = macro.correlations?.[period];
@@ -418,7 +445,7 @@ export default function Home() {
               <p>Worker: {workerOnline ? "Online" : "Not reachable"} · MT5 streams: {streamCount}</p>
               <p>Broker server: {selected?.broker_server || "Will be identified from the connected MT5 terminal"}</p>
               <p>Bridge is read-only. MT5 login passwords are never required by SwiftLabor.</p>
-              <ol><li>Deploy the worker and create a private bridge token in its environment.</li><li>Install the SwiftLaborBridge EA in the client's MT5 terminal.</li><li>Allow the worker HTTPS domain in MT5 WebRequest settings.</li><li>Attach the EA to charts using M15, H1 and H4 timeframe instances.</li></ol>
+              <ol><li>Deploy the worker and create a private bridge token in its environment.</li><li>Install the SwiftLaborBridge EA in the client's MT5 terminal.</li><li>Allow the worker HTTPS domain in MT5 WebRequest settings.</li><li>Attach the EA to charts using M15, H1 and H4 timeframe instances for market analysis.</li><li>For DXY correlation, add a separate M5 bridge instance and set InpSymbols to the exact verified DXY Market Watch symbol.</li></ol><p><b>External FX reference:</b> Configure REFERENCE_PROVIDER and OANDA_TOKEN (or MASSIVE_API_KEY) in the private worker environment. Never put provider keys in the browser.</p>
             </section>
           ) : section === "AI analyst" ? (
             <section className="panel setup">
