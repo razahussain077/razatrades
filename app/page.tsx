@@ -120,8 +120,9 @@ export default function Home() {
           setAuthenticated(false);
           return;
         }
-        if (!s.ok || !u.ok || !a.ok || !m.ok) throw new Error("Worker API returned an error");
-        const [nextStatus, nextUniverse, nextSignals, nextMacro] = await Promise.all([s.json(), u.json(), a.json(), m.json()]);
+        if (!s.ok || !u.ok || !a.ok) throw new Error("Worker API returned an error");
+        const [nextStatus, nextUniverse, nextSignals] = await Promise.all([s.json(), u.json(), a.json()]);
+        const nextMacro = m.ok ? await m.json() as CorrelationSnapshot : null;
         if (stopped) return;
         setStatus(nextStatus);
         setUniverse(nextUniverse.items || []);
