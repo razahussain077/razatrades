@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from analysis import analyze_market
+from reference_data import init_reference_schema, reference_ingestion_loop, correlation_snapshot, sync_reference_once, selected_provider
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -26,7 +27,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("swiftlabor.worker")
 
-SERVICE_VERSION = "1.0.0"
+SERVICE_VERSION = "1.1.0"
 SCAN_INTERVAL = max(5, int(os.getenv("SCAN_INTERVAL_SECONDS", "15")))
 STALE_AFTER = max(30, int(os.getenv("STALE_AFTER_SECONDS", "180")))
 MAX_QUOTE_AGE = max(60, int(os.getenv("MAX_QUOTE_AGE_SECONDS", "300")))
@@ -40,6 +41,7 @@ AI_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
 
 LAST_SCAN: float | None = None
 SCAN_TASK: asyncio.Task | None = None
+REFERENCE_TASK: asyncio.Task | None = None
 AI_SEMAPHORE = asyncio.Semaphore(2)
 
 
@@ -645,7 +647,7 @@ async def run_analysis(store: Store) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global SCAN_TASK
+    global SCAN_TASK, REFERENCE_TASK
     if os.getenv("TESTING") == "true":
         yield
         return
@@ -673,18 +675,23 @@ async def lifespan(app: FastAPI):
     dsn = os.environ["DATABASE_URL"].replace("postgres://", "postgresql://", 1)
     store = Store(dsn)
     await store.connect()
+    await init_reference_schema(store.require_pool())
     app.state.store = store
     SCAN_TASK = asyncio.create_task(run_analysis(store), name="market-analysis-loop")
+    REFERENCE_TASK = asyncio.create_task(reference_ingestion_loop(store.require_pool()), name="reference-data-ingestion")
     log.info("SwiftLabor worker %s started; persistent storage ready", SERVICE_VERSION)
     try:
         yield
     finally:
-        if SCAN_TASK:
-            SCAN_TASK.cancel()
-            try:
-                await SCAN_TASK
-            except asyncio.CancelledError:
-                pass
+        for task in (SCAN_TASK, REFERENCE_TASK):
+            if task:
+                task.cancel()
+        for task in (SCAN_TASK, REFERENCE_TASK):
+            if task:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         await store.close()
 
 
@@ -800,6 +807,33 @@ async def api_status(request: Request):
         "engine": "swiftlabor-rules-v1",
         "ai_commentary": bool(os.getenv("AI_GATEWAY_API_KEY") and os.getenv("AI_GATEWAY_MODEL")),
     }
+
+
+@app.post("/api/reference/sync")
+async def api_reference_sync(request: Request):
+    tenant_id = await require_dashboard(request)
+    store = get_store(request)
+    if not await store.rate_limit(tenant_id, "reference-manual-sync", 3, 60):
+        raise HTTPException(status_code=429, detail="Reference sync rate limit exceeded")
+    if selected_provider() == "none":
+        raise HTTPException(status_code=503, detail="Configure OANDA_TOKEN or MASSIVE_API_KEY in the worker environment first")
+    try:
+        result = await sync_reference_once(store.require_pool())
+        return {"status": "ok", **result}
+    except Exception as exc:
+        log.exception("Manual reference data sync failed tenant=%s", tenant_id)
+        raise HTTPException(status_code=502, detail="Reference data sync failed; inspect worker logs for provider details") from exc
+
+
+@app.get("/api/correlation")
+async def api_correlation(request: Request):
+    tenant_id = await require_dashboard(request)
+    try:
+        result = await correlation_snapshot(get_store(request).require_pool(), tenant_id)
+        return result
+    except Exception:
+        log.exception("Cross-asset correlation snapshot failed tenant=%s", tenant_id)
+        raise HTTPException(status_code=503, detail="Cross-asset analytics are temporarily unavailable")
 
 
 @app.get("/api/universe")
