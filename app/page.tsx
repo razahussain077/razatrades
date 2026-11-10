@@ -5,7 +5,7 @@ import type { FormEvent, ReactNode } from "react";
 import {
   Activity, AlertTriangle, BrainCircuit, CandlestickChart, Clock3, Gauge,
   LayoutDashboard, Radio, ScanSearch, Search, Settings2, ShieldCheck,
-  Target, Waves, RefreshCw, ChevronRight, LogOut
+  Target, Waves, RefreshCw, ChevronRight, LogOut, GitCompareArrows
 } from "lucide-react";
 import {
   CandlestickSeries, ColorType, CrosshairMode, createChart, type Time
@@ -32,10 +32,29 @@ type Commentary = {
   summary: string; observations: string[]; risks: string[];
   invalidation_context: string; limitations: string;
 };
+type CorrelationSnapshot = {
+  status: "ready" | "unavailable";
+  provider: string;
+  dxy_symbol: string | null;
+  common_m5_bars: number;
+  minimum_age_seconds: number;
+  updated_at: string;
+  feeds: Record<string, {
+    provider: string; symbol?: string | null; configured: boolean;
+    candles?: number; age_seconds?: number | null; fresh?: boolean;
+    last_success_at?: string | null; last_error?: string | null;
+  }>;
+  correlations?: Record<string, {
+    timeframe: string;
+    pairs: Record<string, Record<string, number | null>>;
+  }>;
+  warnings: string[];
+};
 
 const FRAMES = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"];
 const NAV = [
   ["Overview", LayoutDashboard],
+  ["Macro & SMT", GitCompareArrows],
   ["AI analyst", BrainCircuit],
 ] as const;
 const money = (value: number | null | undefined, digits = 5) =>
@@ -50,6 +69,7 @@ export default function Home() {
   const [status, setStatus] = useState<Status | null>(null);
   const [universe, setUniverse] = useState<MarketItem[]>([]);
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [macro, setMacro] = useState<CorrelationSnapshot | null>(null);
   const [search, setSearch] = useState("");
   const [chartBars, setChartBars] = useState(false);
   const [chartMeta, setChartMeta] = useState<{source:string;updated:string;quoteAge?:number;bid?:number;ask?:number;spread?:number;digits?:number}>({source:"Waiting for broker feed",updated:"No broker candles received"});
@@ -88,21 +108,23 @@ export default function Home() {
     let stopped = false;
     const refresh = async () => {
       try {
-        const [s, u, a] = await Promise.all([
+        const [s, u, a, m] = await Promise.all([
           fetch("/api/status", { cache: "no-store" }),
           fetch("/api/universe", { cache: "no-store" }),
           fetch("/api/signals?data_mode=broker", { cache: "no-store" }),
+          fetch("/api/correlation", { cache: "no-store" }),
         ]);
-        if ([s, u, a].some(response => response.status === 401)) {
+        if ([s, u, a, m].some(response => response.status === 401)) {
           setAuthenticated(false);
           return;
         }
-        if (!s.ok || !u.ok || !a.ok) throw new Error("Worker API returned an error");
-        const [nextStatus, nextUniverse, nextSignals] = await Promise.all([s.json(), u.json(), a.json()]);
+        if (!s.ok || !u.ok || !a.ok || !m.ok) throw new Error("Worker API returned an error");
+        const [nextStatus, nextUniverse, nextSignals, nextMacro] = await Promise.all([s.json(), u.json(), a.json(), m.json()]);
         if (stopped) return;
         setStatus(nextStatus);
         setUniverse(nextUniverse.items || []);
         setSignals(nextSignals.items || []);
+        setMacro(nextMacro);
         if ((nextUniverse.items || []).length) {
           setSymbol(current => current && nextUniverse.items.some((item: MarketItem) => item.symbol === current)
             ? current : nextUniverse.items[0].symbol);
@@ -112,6 +134,7 @@ export default function Home() {
           setStatus({ process: "offline", data_mode: "disconnected", broker_market_streams: 0 });
           setUniverse([]);
           setSignals([]);
+          setMacro(null);
         }
       }
     };
@@ -326,7 +349,69 @@ export default function Home() {
             <Metric icon={<ShieldCheck/>} title="EXECUTION MODE" value="Read-only" note="No broker orders or account actions"/>
           </div>
 
-          {section === "Settings" ? (
+          {section === "Macro & SMT" ? (
+            <>
+              <div className="stats">
+                <Metric icon={<Activity/>} title="EUR/USD REFERENCE" value={macro?.feeds?.EUR_USD?.fresh ? "Fresh" : "Unavailable"} note={macro?.feeds?.EUR_USD?.provider || "OANDA / Massive not configured"}/>
+                <Metric icon={<Activity/>} title="GBP/USD REFERENCE" value={macro?.feeds?.GBP_USD?.fresh ? "Fresh" : "Unavailable"} note={macro?.feeds?.GBP_USD?.provider || "OANDA / Massive not configured"}/>
+                <Metric icon={<Radio/>} title="DXY BROKER FEED" value={macro?.feeds?.DXY?.fresh ? "Fresh" : "Unavailable"} note={macro?.dxy_symbol || "Exact MT5 index symbol not configured"}/>
+                <Metric icon={<Gauge/>} title="COMMON M5 BARS" value={String(macro?.common_m5_bars || 0)} note="Synchronized observations across all three feeds"/>
+              </div>
+              <section className="panel setup">
+                <small>CROSS-ASSET QUANTITATIVE MONITOR</small>
+                <h2>Rolling return correlation</h2>
+                <p>Calculated from synchronized log returns. Missing intervals are not filled with synthetic prices. Correlation is context, not an entry signal or proof of SMT divergence.</p>
+                {macro?.correlations ? ["M5", "M15", "H1"].map(period => {
+                  const frameData = macro.correlations?.[period];
+                  if (!frameData) return null;
+                  const labels: [string, string][] = [
+                    ["EURUSD_vs_DXY", "EUR/USD vs DXY"],
+                    ["GBPUSD_vs_DXY", "GBP/USD vs DXY"],
+                    ["EURUSD_vs_GBPUSD", "EUR/USD vs GBP/USD"],
+                  ];
+                  const fmt = (value: number | null | undefined) => typeof value === "number" ? value.toFixed(3) : "Insufficient data";
+                  return <div key={period} style={{marginTop:20}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:9}}>
+                      <b style={{fontSize:13}}>{period} correlation</b>
+                      <span style={{fontSize:11,color:"#7a8798"}}>20 / 60 return windows</span>
+                    </div>
+                    <table><thead><tr><th>RELATIONSHIP</th><th>20 OBS.</th><th>60 OBS.</th><th>SAMPLES</th></tr></thead>
+                      <tbody>{labels.map(([key,label]) => {
+                        const values = frameData.pairs[key] || {};
+                        return <tr key={key}>
+                          <td><b>{label}</b></td>
+                          <td>{fmt(values["20"])}</td><td>{fmt(values["60"])}</td>
+                          <td>{String(values["samples_60"] ?? 0)}</td>
+                        </tr>;
+                      })}</tbody>
+                    </table>
+                  </div>;
+                }) : <div className="empty"><GitCompareArrows size={24}/><b>Correlation unavailable</b><p>All three feeds need fresh, synchronized M5 candles and sufficient observations. No synthetic DXY or placeholder correlations are shown.</p></div>}
+              </section>
+              <section className="panel setup">
+                <small>REFERENCE FEED HEALTH</small><h2>Data provenance & freshness</h2>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))",gap:12,marginTop:16}}>
+                  {(["EUR_USD", "GBP_USD", "DXY"] as const).map(key => {
+                    const feed = macro?.feeds?.[key];
+                    return <div key={key} style={{border:"1px solid #e5eaf1",borderRadius:10,padding:14}}>
+                      <b>{key.replace("_", "/")}</b>
+                      <p style={{fontSize:12,color:"#66758a",margin:"7px 0"}}>{feed?.provider || "Not configured"} · {feed?.candles ?? 0} bars</p>
+                      <strong style={{fontSize:13,color:feed?.fresh ? "#15835f" : "#9b6b28"}}>{feed?.fresh ? "Fresh" : "Unavailable / stale"}</strong>
+                      <p style={{fontSize:11,color:"#8793a4",marginTop:6}}>Age: {typeof feed?.age_seconds === "number" ? feed.age_seconds + "s" : "—"}</p>
+                      {feed?.last_error && <p style={{fontSize:11,color:"#b42318"}}>{feed.last_error}</p>}
+                    </div>;
+                  })}
+                </div>
+                {macro?.warnings?.map((warning, index) => <p key={index} style={{fontSize:12,lineHeight:1.6,color:"#718096",marginTop:10}}>• {warning}</p>)}
+                <p style={{fontSize:11,color:"#8894a5",marginTop:14}}>Updated: {macro?.updated_at ? timeLabel(macro.updated_at) : "—"} · Maximum accepted age: {macro?.minimum_age_seconds ?? 900}s</p>
+              </section>
+              <section className="panel setup">
+                <small>SMT INTERPRETATION BOUNDARY</small><h2>Correlation is not SMT</h2>
+                <p>This page reports return correlation and data health. A separate swing-matching engine must detect one pair taking a corresponding swing high/low while the other fails. EUR/USD is a major DXY component, so that pairwise inverse correlation is partly mechanical.</p>
+                <p>DXY must be a verified Equiti MT5 index symbol. Run a separate bridge instance on M5 for that exact symbol; this screen will remain unavailable until it receives fresh candles.</p>
+              </section>
+            </>
+          ) : section === "Settings" ? (
             <section className="panel setup">
               <small>CONNECTION STATUS</small><h2>Equiti MT5 bridge</h2>
               <p>Backend: Server-side authenticated connection (worker URL is private)</p>
