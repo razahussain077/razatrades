@@ -253,7 +253,7 @@ def selected_provider() -> str:
 async def sync_reference_once(pool: Any) -> dict[str, Any]:
     provider = selected_provider()
     if provider == "none":
-        raise RuntimeError("Set OANDA_TOKEN or MASSIVE_API_KEY before syncing reference data")
+        raise RuntimeError("Set OANDA_TOKEN, MASSIVE_API_KEY or POLYGON_API_KEY before syncing reference data")
 
     results: list[dict[str, Any]] = []
     async with httpx.AsyncClient() as client:
@@ -458,7 +458,7 @@ async def correlation_snapshot(pool: Any, tenant_id: str) -> dict[str, Any]:
     if not dxy_symbol:
         warnings.append("DXY_MT5_SYMBOL is not configured. No synthetic DXY series will be substituted.")
     if provider == "none":
-        warnings.append("No OANDA_TOKEN or MASSIVE_API_KEY is configured.")
+        warnings.append("No OANDA_TOKEN, MASSIVE_API_KEY or POLYGON_API_KEY is configured.")
     metrics = None
     if data_ready:
         metrics = {
