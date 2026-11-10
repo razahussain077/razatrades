@@ -20,7 +20,7 @@ log = logging.getLogger("swiftlabor.reference_data")
 
 M5_SECONDS = 300
 DEFAULT_PAIRS = ("EUR_USD", "GBP_USD")
-MAX_CANDLES = min(5000, max(100, int(os.getenv("REFERENCE_CANDLE_COUNT", "500"))))
+MAX_CANDLES = min(5000, max(100, int(os.getenv("REFERENCE_CANDLE_COUNT", "2500"))))
 POLL_SECONDS = max(30, int(os.getenv("REFERENCE_POLL_SECONDS", "60")))
 MAX_AGE_SECONDS = max(600, int(os.getenv("MAX_REFERENCE_AGE_SECONDS", "900")))
 
@@ -84,7 +84,10 @@ async def fetch_oanda_pair(
         timeout=httpx.Timeout(15.0, connect=5.0),
     )
     response.raise_for_status()
-    payload = response.json()
+    return parse_oanda_payload(response.json())
+
+
+def parse_oanda_payload(payload: dict[str, Any]) -> list[ReferenceCandle]:
     output: list[ReferenceCandle] = []
     for raw in payload.get("candles", []):
         if not raw.get("complete"):
@@ -105,7 +108,7 @@ async def fetch_oanda_pair(
             continue
         if _valid_candle(candle):
             output.append(candle)
-    return output
+    return sorted(output, key=lambda item: item.timestamp)
 
 
 async def fetch_massive_pair(
@@ -127,21 +130,28 @@ async def fetch_massive_pair(
         timeout=httpx.Timeout(20.0, connect=5.0),
     )
     response.raise_for_status()
+    return parse_massive_payload(response.json())
+
+
+def parse_massive_payload(payload: dict[str, Any], now_ts: int | None = None) -> list[ReferenceCandle]:
+    now_value = now_ts or int(datetime.now(timezone.utc).timestamp())
     output: list[ReferenceCandle] = []
-    for raw in response.json().get("results", []):
+    for raw in payload.get("results", []):
         try:
+            timestamp = int(raw["t"]) // 1000
             candle = ReferenceCandle(
-                timestamp=int(raw["t"]) // 1000,
+                timestamp=timestamp,
                 open=float(raw["o"]), high=float(raw["h"]),
                 low=float(raw["l"]), close=float(raw["c"]),
                 quote_count=int(raw["n"]) if raw.get("n") is not None else None,
-                price_basis="bid",
+                price_basis="quote_aggregate",
             )
         except (KeyError, TypeError, ValueError):
             continue
-        if _valid_candle(candle):
+        # The REST aggregate endpoint may include a currently updating bar.
+        if timestamp + M5_SECONDS <= now_value and _valid_candle(candle):
             output.append(candle)
-    return output
+    return sorted(output, key=lambda item: item.timestamp)
 
 
 async def init_reference_schema(pool: Any) -> None:
