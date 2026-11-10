@@ -48,6 +48,8 @@ services:
         sync: false
       - key: MASSIVE_API_KEY
         sync: false
+      - key: POLYGON_API_KEY
+        sync: false
       - key: DXY_MT5_SYMBOL
         sync: false
 
