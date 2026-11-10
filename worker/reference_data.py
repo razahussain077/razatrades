@@ -287,21 +287,20 @@ async def sync_reference_once(pool: Any) -> dict[str, Any]:
 async def reference_ingestion_loop(pool: Any) -> None:
     """Poll the selected external provider. Broker MT5 remains the DXY source."""
     while True:
-        provider = selected_provider()
-        if provider == "none":
-            for pair in DEFAULT_PAIRS:
-                try:
-                    await set_feed_status(pool, "oanda", pair, False, "Set OANDA_TOKEN or MASSIVE_API_KEY")
-                except Exception:
-                    log.exception("Could not update reference feed status")
-            await asyncio.sleep(POLL_SECONDS)
-            continue
         try:
-            await sync_reference_once(pool)
+            provider = selected_provider()
+            if provider == "none":
+                for pair in DEFAULT_PAIRS:
+                    await set_feed_status(
+                        pool, "oanda", pair, False,
+                        "Set OANDA_TOKEN or MASSIVE_API_KEY"
+                    )
+            else:
+                await sync_reference_once(pool)
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception("Reference ingestion cycle failed")
+            log.exception("Reference ingestion cycle failed; loop will retry")
         await asyncio.sleep(POLL_SECONDS)
 
 
