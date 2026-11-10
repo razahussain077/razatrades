@@ -1,7 +1,7 @@
 """Reference FX data ingestion and synchronized cross-asset analytics.
 
 OANDA candles use midpoint OHLC plus optional bid/ask closes. Massive forex bars
-are bid-derived quote aggregates (not traded volume). DXY is sourced only from
+are quote-derived aggregates (not consolidated traded volume). DXY is sourced only from
 the explicitly configured broker MT5 symbol. Missing/stale inputs fail closed.
 """
 from __future__ import annotations
@@ -448,7 +448,7 @@ async def correlation_snapshot(pool: Any, tenant_id: str) -> dict[str, Any]:
     )
 
     common = set(series["EUR_USD"]).intersection(series["GBP_USD"], series["DXY"])
-    data_ready = all(feeds[key]["fresh"] for key in feeds) and len(common) >= 80
+    data_ready = provider != "none" and all(feeds[key]["configured"] and feeds[key]["fresh"] for key in feeds) and len(common) >= 80
     warnings = [
         "DXY is taken from the configured Equiti MT5 symbol; verify its contract and quote convention.",
         "EUR/USD is a major component of DXY, so EUR/USD–DXY inverse correlation is partly mechanical and is not independent confirmation.",
