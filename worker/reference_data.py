@@ -115,14 +115,15 @@ async def fetch_massive_pair(
     client: httpx.AsyncClient, pair: str
 ) -> list[ReferenceCandle]:
     """Fetch 5-minute quote-derived bid bars from Massive (formerly Polygon)."""
-    api_key = os.getenv("MASSIVE_API_KEY", "").strip()
+    api_key = (os.getenv("MASSIVE_API_KEY") or os.getenv("POLYGON_API_KEY") or "").strip()
     if not api_key:
         raise RuntimeError("MASSIVE_API_KEY is not configured")
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=8)
     ticker = "C:" + pair.replace("_", "")
+    base_url = os.getenv("MASSIVE_BASE_URL", "https://api.massive.com").rstrip("/")
     url = (
-        f"https://api.massive.com/v2/aggs/ticker/{ticker}/range/5/minute/"
+        f"{base_url}/v2/aggs/ticker/{ticker}/range/5/minute/"
         f"{int(start.timestamp() * 1000)}/{int(end.timestamp() * 1000)}"
     )
     response = await client.get(
@@ -243,7 +244,7 @@ def selected_provider() -> str:
     if requested == "auto":
         if os.getenv("OANDA_TOKEN"):
             return "oanda"
-        if os.getenv("MASSIVE_API_KEY"):
+        if os.getenv("MASSIVE_API_KEY") or os.getenv("POLYGON_API_KEY"):
             return "massive"
         return "none"
     return requested
