@@ -34,6 +34,22 @@ services:
         value: "6"
       - key: DATABASE_SSL
         value: "false"
+      - key: REFERENCE_PROVIDER
+        value: auto
+      - key: REFERENCE_POLL_SECONDS
+        value: "60"
+      - key: REFERENCE_CANDLE_COUNT
+        value: "2500"
+      - key: MAX_REFERENCE_AGE_SECONDS
+        value: "900"
+      - key: OANDA_ENV
+        value: practice
+      - key: OANDA_TOKEN
+        sync: false
+      - key: MASSIVE_API_KEY
+        sync: false
+      - key: DXY_MT5_SYMBOL
+        sync: false
 
 databases:
   - name: swiftlabor-market-db
