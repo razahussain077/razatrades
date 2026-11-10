@@ -30,7 +30,12 @@ async function forward(request: NextRequest, context: Context) {
       (safePath.length === 1 && ["status", "universe", "signals", "correlation"].includes(safePath[0])) ||
       (safePath.length === 2 && safePath[0] === "market" && /^[A-Za-z0-9._+-]{2,32}$/.test(safePath[1]))
     )
-  ) || (request.method === "POST" && safePath.length === 2 && safePath[0] === "ai" && safePath[1] === "commentary");
+  ) || (
+    request.method === "POST" &&
+    safePath.length === 2 &&
+    ((safePath[0] === "ai" && safePath[1] === "commentary") ||
+     (safePath[0] === "reference" && safePath[1] === "sync"))
+  );
   if (!allowed) return NextResponse.json({ error: "Route not found" }, { status: 404 });
 
   const token = process.env.DASHBOARD_API_TOKEN || "";
