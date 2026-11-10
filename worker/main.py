@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from analysis import analyze_market
-from reference_data import init_reference_schema, reference_ingestion_loop, correlation_snapshot
+from reference_data import init_reference_schema, reference_ingestion_loop, correlation_snapshot, sync_reference_once, selected_provider
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -807,6 +807,22 @@ async def api_status(request: Request):
         "engine": "swiftlabor-rules-v1",
         "ai_commentary": bool(os.getenv("AI_GATEWAY_API_KEY") and os.getenv("AI_GATEWAY_MODEL")),
     }
+
+
+@app.post("/api/reference/sync")
+async def api_reference_sync(request: Request):
+    tenant_id = await require_dashboard(request)
+    store = get_store(request)
+    if not await store.rate_limit(tenant_id, "reference-manual-sync", 3, 60):
+        raise HTTPException(status_code=429, detail="Reference sync rate limit exceeded")
+    if selected_provider() == "none":
+        raise HTTPException(status_code=503, detail="Configure OANDA_TOKEN or MASSIVE_API_KEY in the worker environment first")
+    try:
+        result = await sync_reference_once(store.require_pool())
+        return {"status": "ok", **result}
+    except Exception as exc:
+        log.exception("Manual reference data sync failed tenant=%s", tenant_id)
+        raise HTTPException(status_code=502, detail="Reference data sync failed; inspect worker logs for provider details") from exc
 
 
 @app.get("/api/correlation")
