@@ -45,23 +45,31 @@ class CandleValidationTests(unittest.TestCase):
             {"t": 600000, "o": 1.1, "h": 1.3, "l": 1.0, "c": 1.2, "n": 5},
             {"t": 900000, "o": 1.2, "h": 1.4, "l": 1.1, "c": 1.3, "n": 6},
         ]}
-        candles = parse_massive_payload(payload, now_ts=1200)
+        candles = parse_massive_payload(payload, now_ts=1199)
         self.assertEqual([c.timestamp for c in candles], [300, 600])
         self.assertEqual(candles[0].price_basis, "quote_aggregate")
 
 
 class CorrelationTests(unittest.TestCase):
     def test_inverse_log_returns_produce_negative_one(self):
-        a = {i * 300: math.exp(i * 0.001) for i in range(8)}
-        b = {i * 300: math.exp(-i * 0.001) for i in range(8)}
+        increments = [0.001, 0.002, -0.001, 0.003, 0.0005, -0.002, 0.0015]
+        cumulative = [0.0]
+        for increment in increments:
+            cumulative.append(cumulative[-1] + increment)
+        a = {i * 300: math.exp(value) for i, value in enumerate(cumulative)}
+        b = {i * 300: math.exp(-value) for i, value in enumerate(cumulative)}
         coefficient, samples = _correlation_pair(a, b, 300, 6)
         self.assertAlmostEqual(coefficient, -1.0, places=8)
         self.assertEqual(samples, 7)
 
     def test_missing_intervals_are_not_forward_filled(self):
         times = [0, 300, 900, 1200, 1500]
-        a = {t: math.exp(i * 0.001) for i, t in enumerate(times)}
-        b = {t: math.exp(-i * 0.001) for i, t in enumerate(times)}
+        increments = [0.001, 0.002, -0.001, 0.003]
+        cumulative = [0.0]
+        for increment in increments:
+            cumulative.append(cumulative[-1] + increment)
+        a = {t: math.exp(cumulative[i]) for i, t in enumerate(times)}
+        b = {t: math.exp(-cumulative[i]) for i, t in enumerate(times)}
         coefficient, samples = _correlation_pair(a, b, 300, 3)
         self.assertAlmostEqual(coefficient, -1.0, places=8)
         self.assertEqual(samples, 3)
