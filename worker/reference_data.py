@@ -249,6 +249,41 @@ def selected_provider() -> str:
     return requested
 
 
+async def sync_reference_once(pool: Any) -> dict[str, Any]:
+    provider = selected_provider()
+    if provider == "none":
+        raise RuntimeError("Set OANDA_TOKEN or MASSIVE_API_KEY before syncing reference data")
+
+    results: list[dict[str, Any]] = []
+    async with httpx.AsyncClient() as client:
+        for pair in DEFAULT_PAIRS:
+            try:
+                candles = (
+                    await fetch_oanda_pair(client, pair)
+                    if provider == "oanda"
+                    else await fetch_massive_pair(client, pair)
+                )
+                await save_reference_candles(pool, provider, pair, candles)
+                results.append({
+                    "instrument": pair,
+                    "status": "ok",
+                    "candles_written": len(candles),
+                    "last_candle_time": max(c.timestamp for c in candles),
+                })
+            except Exception as exc:
+                log.warning("%s %s manual/background sync failed: %s", provider, pair, str(exc)[:300])
+                await set_feed_status(pool, provider, pair, True, str(exc))
+                results.append({"instrument": pair, "status": "error", "error": str(exc)[:300]})
+
+    if not any(item["status"] == "ok" for item in results):
+        raise RuntimeError("No reference instruments synced successfully")
+    return {
+        "provider": provider,
+        "results": results,
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def reference_ingestion_loop(pool: Any) -> None:
     """Poll the selected external provider. Broker MT5 remains the DXY source."""
     while True:
@@ -262,17 +297,7 @@ async def reference_ingestion_loop(pool: Any) -> None:
             await asyncio.sleep(POLL_SECONDS)
             continue
         try:
-            async with httpx.AsyncClient() as client:
-                for pair in DEFAULT_PAIRS:
-                    try:
-                        if provider == "oanda":
-                            candles = await fetch_oanda_pair(client, pair)
-                        else:
-                            candles = await fetch_massive_pair(client, pair)
-                        await save_reference_candles(pool, provider, pair, candles)
-                    except Exception as exc:
-                        log.warning("%s %s ingestion failed: %s", provider, pair, str(exc)[:300])
-                        await set_feed_status(pool, provider, pair, True, str(exc))
+            await sync_reference_once(pool)
         except asyncio.CancelledError:
             raise
         except Exception:
